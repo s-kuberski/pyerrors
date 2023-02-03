@@ -1073,7 +1073,7 @@ def _intersection_idx(idl):
     return sorted(set.intersection(*[set(o) for o in idl]))
 
 
-def _expand_deltas_for_merge(deltas, idx, shape, new_idx):
+def _expand_deltas_for_merge(deltas, idx, shape, new_idx, shift):
     """Expand deltas defined on idx to the list of configs that is defined by new_idx.
        New, empty entries are filled by 0. If idx and new_idx are of type range, the smallest
        common divisor of the step sizes is used as new step size.
@@ -1095,6 +1095,7 @@ def _expand_deltas_for_merge(deltas, idx, shape, new_idx):
         if idx == new_idx:
             return deltas
     ret = np.zeros(new_idx[-1] - new_idx[0] + 1)
+    deltas = np.array(deltas) + shift * len(idx) / len(new_idx)
     for i in range(shape):
         ret[idx[i] - new_idx[0]] = deltas[i]
     return np.array([ret[new_idx[i] - new_idx[0]] for i in range(len(new_idx))]) * len(new_idx) / len(idx)
@@ -1215,7 +1216,7 @@ def derived_observable(func, data, array_mode=False, **kwargs):
             d_extracted[name] = []
             ens_length = len(new_idl_d[name])
             for i_dat, dat in enumerate(data):
-                d_extracted[name].append(np.array([_expand_deltas_for_merge(o.deltas.get(name, np.zeros(ens_length)), o.idl.get(name, new_idl_d[name]), o.shape.get(name, ens_length), new_idl_d[name]) for o in dat.reshape(np.prod(dat.shape))]).reshape(dat.shape + (ens_length, )))
+                d_extracted[name].append(np.array([_expand_deltas_for_merge(o.deltas.get(name, np.zeros(ens_length)), o.idl.get(name, new_idl_d[name]), o.shape.get(name, ens_length), new_idl_d[name], 0) for o in dat.reshape(np.prod(dat.shape))]).reshape(dat.shape + (ens_length, )))
         for name in new_cov_names:
             g_extracted[name] = []
             zero_grad = _Zero_grad(new_covobs_lengths[name])
@@ -1241,7 +1242,20 @@ def derived_observable(func, data, array_mode=False, **kwargs):
                     if name in obs.cov_names:
                         new_grad[name] = new_grad.get(name, 0) + deriv[i_val + j_obs] * obs.covobs[name].grad
                     else:
-                        new_deltas[name] = new_deltas.get(name, 0) + deriv[i_val + j_obs] * _expand_deltas_for_merge(obs.deltas[name], obs.idl[name], obs.shape[name], new_idl_d[name])
+                        def get_shift(oi, ol, new_value, name):
+                            if len(ol) < 2:
+                                return 0.
+                            return (
+                                + 2 * sum([o.r_values.get(name, 0) for o in ol]) -
+                                ol[oi].r_values[name] -
+                                (
+                                    (new_value * sum([o.shape.get(name, 0) for o in ol]) - sum([ol[i].r_values.get(name, 0) * ol[i].shape.get(name, 0) if i != oi else 0 for i in range(len(ol))])) /
+                                    ol[oi].shape[name]
+                                )
+                            )
+                        shift = -get_shift(j_obs[0], data, new_val, name)
+                        #print('shift:', shift, 'from', (j_obs[0], data, new_val, name))
+                        new_deltas[name] = new_deltas.get(name, 0) + deriv[i_val + j_obs] * _expand_deltas_for_merge(obs.deltas[name], obs.idl[name], obs.shape[name], new_idl_d[name], shift)
 
         new_covobs = {name: Covobs(0, allcov[name], name, grad=new_grad[name]) for name in new_grad}
 
