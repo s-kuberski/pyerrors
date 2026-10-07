@@ -1531,8 +1531,9 @@ def covariance(obs, visualize=False, correlation=False, smooth=None, **kwargs):
     The error covariance is defined such that it agrees with the squared standard error for two identical observables
     $$\operatorname{cov}(a,a)=\sum_{s=1}^N\delta_a^s\delta_a^s/[N(N-1)]=\sigma_a^2$$
     in the absence of autocorrelation.
-    Each Monte Carlo ensemble's zero-lag covariance matrix is normalized to a correlation matrix and rescaled by that ensemble's gamma-method errors. The resulting covariance matrices are added, followed by the exact covariance of shared Covobs inputs. A zero-lag covariance matrix is positive semi-definite
-    $$\sum_{i,j}v_i\Gamma_{ij}(0)v_j=\frac{1}{N}\sum_{s=1}^N\left(\sum_i v_i\delta_i^s\right)^2\geq 0\,,$$ for every $v\in\mathbb{R}^M$, while such an identity does not hold for larger windows/lags.
+    Each Monte Carlo ensemble's zero-lag covariance matrix is normalized to a correlation matrix and rescaled by that ensemble's gamma-method errors. The resulting covariance matrices are added, followed by the exact covariance of shared Covobs inputs. For each ensemble, the zero-lag covariance matrix is positive semi-definite:
+    $$\sum_{i,j}v_i C^{(0)}_{ij}v_j=\sum_s\left(\sum_i\frac{v_i\delta_i^s}{\sqrt{N_i(N_i-1)}}\right)^2\geq 0\,,$$
+    where $i$ runs over observables supported on that ensemble, $N_i$ is their full sample count on the ensemble, and $\delta_i^s=0$ on configurations where observable $i$ was not measured. Such an identity does not hold for larger windows/lags.
     For each ensemble, this approximation is equivalent to assuming that the integrated autocorrelation time of an off-diagonal element is equal to the geometric mean of the integrated autocorrelation times of the corresponding diagonal elements.
     $$\tau_{\mathrm{int}, ij}=\sqrt{\tau_{\mathrm{int}, i}\times \tau_{\mathrm{int}, j}}$$
     Normalization and diagonal rescaling preserve positive semidefiniteness, as does adding the independent source covariance matrices (up to numerical rounding errors).
@@ -1550,8 +1551,9 @@ def covariance(obs, visualize=False, correlation=False, smooth=None, **kwargs):
     cov = np.zeros((length, length))
     for e_name in sorted(set().union(*(o.mc_names for o in obs))):
         source_cov = np.zeros((length, length))
-        for i in range(length):
-            for j in range(i, length):
+        supported = [i for i, o in enumerate(obs) if e_name in o.mc_names]
+        for pos, i in enumerate(supported):
+            for j in supported[pos:]:
                 source_cov[i, j] = _covariance_element(obs[i], obs[j], e_name)
         source_cov = source_cov + source_cov.T - np.diag(np.diag(source_cov))
 
@@ -1562,7 +1564,10 @@ def covariance(obs, visualize=False, correlation=False, smooth=None, **kwargs):
         cov += np.outer(source_errors, source_errors) * source_corr
 
     for c_name in sorted(set().union(*(o.cov_names for o in obs))):
-        reference = next(o.covobs[c_name] for o in obs if c_name in o.cov_names)
+        source_covobs = [o.covobs[c_name] for o in obs if c_name in o.cov_names]
+        reference = source_covobs[0]
+        if any(co.N != reference.N or not np.allclose(co.cov, reference.cov) for co in source_covobs[1:]):
+            raise ValueError(f'Inconsistent covariance matrices for {c_name}!')
         gradients = np.array([o.covobs[c_name].grad.ravel() if c_name in o.cov_names else np.zeros(reference.N) for o in obs])
         cov += gradients @ reference.cov @ gradients.T
 

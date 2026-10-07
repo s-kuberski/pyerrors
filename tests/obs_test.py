@@ -906,6 +906,22 @@ def test_covariance_preserves_shared_covobs():
     assert np.isclose(pe.covariance([y1, y2])[0, 1], 0.01)
 
 
+def test_covariance_rejects_inconsistent_shared_covobs():
+    cov = [[1.0, 0.9], [0.9, 1.0]]
+    other_cov = [[1.0, -0.9], [-0.9, 1.0]]
+    first = pe.cov_Obs([0.0, 0.0], cov, 'shared')
+    same = pe.cov_Obs([0.0, 0.0], cov, 'shared')
+    different = pe.cov_Obs([0.0, 0.0], other_cov, 'shared')
+    for obs in first + same + different:
+        obs.gamma_method()
+
+    assert np.isclose(pe.covariance([first[0], same[1]])[0, 1], 0.9)
+    with pytest.raises(ValueError, match='Inconsistent covariance matrices for shared'):
+        pe.covariance([first[0], different[1]])
+    with pytest.raises(ValueError, match='Inconsistent covariance matrices for shared'):
+        pe.covariance([different[1], first[0]])
+
+
 def test_covariance_rescales_autocorrelations_by_ensemble():
     rng = np.random.default_rng(15)
     data1 = np.repeat(rng.normal(size=100), 5)
@@ -935,6 +951,22 @@ def test_covariance_unequal_replica_support():
     expected = np.dot(x1.deltas['ens|r1'], x2.deltas['ens|r1'])
     expected /= np.sqrt(300 * 299 * 100 * 99)
     assert np.isclose(pe.covariance([x1, x2])[0, 1], expected)
+
+
+def test_covariance_psd_with_different_overlaps():
+    data = np.array([1.0, -1.0] * 5)
+    a = pe.Obs([data], ['ens'], idl=[range(1, 11)])
+    b = pe.Obs([np.tile(data, 2)], ['ens'], idl=[range(1, 21)])
+    c = pe.Obs([data], ['ens'], idl=[range(11, 21)])
+    for obs in (a, b, c):
+        obs.gamma_method(S=0)
+
+    corr = pe.covariance([a, b, c], correlation=True)
+    expected = np.array([[1.0, 1 / np.sqrt(2), 0.0],
+                         [1 / np.sqrt(2), 1.0, 1 / np.sqrt(2)],
+                         [0.0, 1 / np.sqrt(2), 1.0]])
+    assert np.allclose(corr, expected)
+    assert np.min(np.linalg.eigvalsh(corr)) >= -1e-14
 
 
 def test_covariance_linear_propagation_across_sources():
